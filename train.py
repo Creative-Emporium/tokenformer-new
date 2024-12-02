@@ -3,6 +3,7 @@ import time
 import json
 import numpy as np
 import torch
+import tqdm
 
 from datasets import load_dataset
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from transformer import TransformerConfiguration, TransformerModel
 from tokenformer import TokenFormerConfiguration, TokenFormerModel
 
 dataset = load_dataset('uonlp/CulturaX', 'en', split='train', streaming=True)
-dataset = dataset.take(100)
+dataset = dataset.take(5)
 
 corpus = ''
 for data in dataset:
@@ -81,7 +82,17 @@ def generate_next_batch():
 
 opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
 
-for epoch in range(1):
+def generate_samples(model):
+    samples = [ 'Today the weather is quite', 'Here we stand, before our' ]
+
+    for s in samples:
+        encoded = [ encoding.encode(s) ]
+        encoded = torch.tensor(encoded).cuda()
+        generated = model.generate(encoded, 20)
+        generated = generated[0].tolist()
+        print('->', encoding.decode(generated))
+
+for epoch in range(25):
     e0 = time.time()
 
     X, y = generate_batch()
@@ -113,14 +124,38 @@ for epoch in range(1):
     e1 = time.time()
 
     print(f'\ttime = {(e1 - e0) / 60 :.0f} min')
+    
+    generate_samples(model)
+    
+# Perplexity evaluation
+model.eval()  # Set model to evaluation mode
+total_loss = 0
+total_tokens = 0
 
-# Sample sentences
-# TODO: generate in the middle of training as well...
-samples = [ 'The weather today is ', 'Algebra is' ]
+with torch.no_grad():
+    dataset = load_dataset('uonlp/CulturaX', 'en', split='train', streaming=True)
+    dataset = dataset.take(5)
+    # TODO: shuffle?
+    
+    corpus = ''
+    for data in dataset:
+        corpus += data['text']
+    
+    # TODO: measure perplexity retention?
+    tokens = [ encoding.encode(corpus) ]
+    tokens = torch.tensor(tokens).cuda()
 
-for s in samples:
-    encoded = [ encoding.encode(s) ]
-    encoded = torch.tensor(encoded).cuda()
-    generated = model.generate(encoded, 50)
-    generated = generated[0].tolist()
-    print('->', encoding.decode(generated))
+    for i in tqdm.trange(0, len(tokens[0]) - config.context, config.context):
+        X = tokens[:, i:i + config.context]
+        y = tokens[:, i + 1:i + 1 + config.context]
+
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            logits, loss = model(X, y)
+
+        total_loss += loss.item() * X.size(1)
+        total_tokens += X.size(1)
+
+average_loss = total_loss / total_tokens
+perplexity = torch.exp(torch.tensor(average_loss)).item()
+
+print('average loss, perplexity', average_loss, perplexity)
