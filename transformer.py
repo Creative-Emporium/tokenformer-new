@@ -28,7 +28,7 @@ class TransformerSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size()
         qkv = self.attn(x)
-        q, k, v = qkv.split(self.embedding, dim=2)
+        q, k, v = qkv.split(self.embedding, dim=-1)
         k = k.view(B, T, self.heads, C // self.heads).transpose(1, 2)
         q = q.view(B, T, self.heads, C // self.heads).transpose(1, 2)
         v = v.view(B, T, self.heads, C // self.heads).transpose(1, 2)
