@@ -1,114 +1,83 @@
 import os
 import time
-import json
-import numpy as np
 import torch
 import tqdm
 import argparse
 import sys
-
-from datasets import load_dataset
-from dataclasses import dataclass
+import pprint
+import numpy as np
 
 from transformer import TransformerConfiguration, TransformerModel
 from tokenformer import TokenFormerConfiguration, TokenFormerModel
+from dataset import Dataset
+from config import *
 from util import *
 
 # Run-time configuration
-# TODO: checkpoint and loss destinations
-# TODO: ini files
+# TODO: checkpoint and losses
 parser = argparse.ArgumentParser()
-parser.add_argument('model', type=str, choices=[ 'transformer', 'tokenformer' ])
-parser.add_argument('language', type=str, choices=[ 'en', 'fr', 'ru', 'es', 'de', 'it', 'el' ])
-parser.add_argument('--batch_size', type=int, default=8)
-parser.add_argument('--epochs', type=int, default=100)
-parser.add_argument('--steps_per_epoch', type=int, default=1000)
+parser.add_argument('--config', type=str, default=None)
+parser.add_argument('--batch', type=int, default=8)
 args = parser.parse_args(sys.argv[1:])
 
-class Dataset:
+def header(text, width=50):
+    print(width * '-')
+    print(((width - len(text)) // 2) * ' ' + text)
+    print(width * '-')
 
-    def __init__(self, encoder, language='en', elements=100):
-        dataset = load_dataset('uonlp/CulturaX', language, split='train', streaming=True)
-        dataset = dataset.take(elements)
+choice = args.config
+if args.config is None:
+    header('Select training configuration'.upper())
+    for i, c in enumerate(configs):
+        print(f'  [{i}] {c}')
+        
+    i = int(input('\n> '))
+    choice = list(configs.keys())[i]
+    print('')
 
-        self.text = ''
-        for data in dataset:
-            self.text += '\n' + data['text']
+header('Selected configuration'.upper())
+config = configs[choice]
+pprint.PrettyPrinter(indent=4).pprint(config)
+print('')
 
-        self.corpus = encoder.encode(self.text)
-        self.corpus = torch.tensor(self.corpus)
-
-        self.rng = np.random.default_rng(0)
-        self.device = 'cuda:0'
-
-    def generate_batch(self, batch_size):
-        ix = self.rng.integers(len(self.corpus) - (config.context + 1), size=batch_size)
-        X = torch.stack([ self.corpus[i : i + config.context] for i in ix ], dim=0)
-        y = torch.stack([ self.corpus[i + 1 : i + config.context + 1] for i in ix ], dim=0)
-        return X.to(self.device), y.to(self.device)
-
-    def evaluate_perplexity(self, model):
-        tokens = self.corpus.to(self.device).unsqueeze(0)
-
-        model.eval()
-        total_loss = 0
-        total_tokens = 0
-
-        for i in tqdm.trange(0, len(tokens[0]) - config.context, config.context,
-                             desc='\tEvaluating perplexity', ncols=100):
-            X = tokens[:, i : i + config.context]
-            y = tokens[:, i + 1 : i  + 1 + config.context]
-
-            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                _, loss = model(X, y)
-
-            total_loss += loss.item() * X.size(1)
-            total_tokens += X.size(1)
-
-        average_loss = total_loss / total_tokens
-
-        return torch.exp(torch.tensor(average_loss)).item()
+assert 'model' in config
 
 # PyTorch configuration
 torch.manual_seed(0)
 torch.set_float32_matmul_precision('high')
 
 # Model configuration
-if args.model == 'transformer':
-    config = TransformerConfiguration()
-    model = TransformerModel(config)
-elif args.model == 'tokenformer':
-    config = TokenFormerConfiguration()
-    model = TokenFormerModel(config)
+if config['model'] == 'transformer':
+    model_config = TransformerConfiguration()
+    model = TransformerModel(model_config)
+elif config['model'] == 'tokenformer':
+    model_config = TokenFormerConfiguration()
+    model = TokenFormerModel(model_config)
 else:
     raise NotImplementedError(f'Invalid model \'{args.model}\'')
 
 model = model.cuda()
 torch.compile(model)
 
-dataset = Dataset(config.encoding, language=args.language)
+dataset = Dataset(model_config, config['languages'])
 
-print(50 * '-')
-print('Configuration:')
-print(50 * '-')
-print('\tvocab size', config.encoding.n_vocab)
-print('\ttokens', len(dataset.corpus))
-print('\tmodel parameters:', parameter_count(model))
+training = config['training']
+steps = training['steps'] * training['batch'] // args.batch + 1
 
 opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
 
-t_train = time.time()
+losses = []
+perplexities = []
 
-for epoch in range(args.epochs):
+t_train = time.time()
+for epoch in range(training['epochs']):
     t_begin = time.time()
 
-    X, y = dataset.generate_batch(args.batch_size)
+    X, y = dataset.generate_batch(args.batch)
 
-    print(50 * '-')
-    print(f'Epoch #{epoch + 1}')
-    print(50 * '-')
-
-    bar = tqdm.tqdm(range(args.steps_per_epoch + 1),
+    header(f'EPOCH #{epoch + 1}')
+    
+    bar = tqdm.tqdm(range(steps),
                     desc='\tTraining model',
                     ncols=100)
 
@@ -125,6 +94,8 @@ for epoch in range(args.epochs):
         bar.set_postfix({
             'loss': f'{loss.item() :01.4f}',
         })
+        
+        losses.append(loss.item())
 
     bar.close()
 
@@ -135,4 +106,25 @@ for epoch in range(args.epochs):
         perplexity = dataset.evaluate_perplexity(model)
         print(f'\n\tPerplexity = {perplexity}')
         print(f'\tDelta = {(t_end - t_begin) / 60 :.0f} min, Progress = {(t_end - t_train) / 60 :.0f} min')
-        generate_samples(model, dataset, config.encoding)
+        generate_samples(model, dataset, model_config.encoding)
+        perplexities.append(perplexity)
+
+# Write data
+os.makedirs('data', exist_ok=True)
+
+basename = choice.replace('/', '-')
+basename = os.path.join('data', basename)
+
+np.savez(basename + '-metrics.npz',
+         loss=np.array(losses),
+         perplexity=np.array(perplexities))
+
+torch.save(model, basename + '-model.tch')
+
+# TODO: knowledge masking
+# adding new parameters to learn languages, but now:
+# - keep things unchanged; all parameters partake in learning the new language
+# - freeze parameters not "relevant" to the current language
+# also when keeping things unchanged:
+# - relearn the entire dataset consistint of all languages
+# - only learn on the new language
