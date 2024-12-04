@@ -14,7 +14,6 @@ from config import *
 from util import *
 
 # Run-time configuration
-# TODO: checkpoint and losses
 parser = argparse.ArgumentParser()
 parser.add_argument('--config', type=str, default=None)
 parser.add_argument('--batch', type=int, default=8)
@@ -47,11 +46,27 @@ torch.manual_seed(0)
 torch.set_float32_matmul_precision('high')
 
 # Model configuration
+def edit_model_config(config, model_config):
+    for k in config:
+        if k == 'encoding':
+            # For now this means nothing
+            pass
+        elif hasattr(model_config, k):
+            x = config[k]
+            if k in [ 'context', 'embedding', 'heads', 'layers', 'parameters' ]:
+                x = int(x)
+                
+            setattr(model_config, k, x)
+
 if config['model'] == 'transformer':
     model_config = TransformerConfiguration()
+    edit_model_config(config, model_config)
+    
     model = TransformerModel(model_config)
 elif config['model'] == 'tokenformer':
     model_config = TokenFormerConfiguration()
+    edit_model_config(config, model_config)
+    
     model = TokenFormerModel(model_config)
 else:
     raise NotImplementedError(f'Invalid model \'{args.model}\'')
@@ -106,8 +121,14 @@ for epoch in range(training['epochs']):
         perplexity = dataset.evaluate_perplexity(model)
         print(f'\n\tPerplexity = {perplexity}')
         print(f'\tDelta = {(t_end - t_begin) / 60 :.0f} min, Progress = {(t_end - t_train) / 60 :.0f} min')
+        print(f'\tNumber of parameters = {parameter_count(model)}')
         generate_samples(model, dataset, model_config.encoding)
         perplexities.append(perplexity)
+    
+    if epoch > 0 and 'grow' in config and  (epoch + 1) % config['grow']['frequency'] == 0:
+        amount = config['grow']['amount']
+        print(f'\tGrowing model by {amount} parameters')
+        model.grow_parameters(amount)
 
 # Write data
 os.makedirs('data', exist_ok=True)
@@ -120,11 +141,3 @@ np.savez(basename + '-metrics.npz',
          perplexity=np.array(perplexities))
 
 torch.save(model, basename + '-model.tch')
-
-# TODO: knowledge masking
-# adding new parameters to learn languages, but now:
-# - keep things unchanged; all parameters partake in learning the new language
-# - freeze parameters not "relevant" to the current language
-# also when keeping things unchanged:
-# - relearn the entire dataset consistint of all languages
-# - only learn on the new language

@@ -26,6 +26,13 @@ for f in glob.glob('configs/*.ini'):
             elif k == 'languages':
                 x = x.split(';')
                 x = [ w.strip() for w in x ]
+            elif k == 'grow':
+                x = x.split(';')
+                x = [ int(w.strip()) for w in x ]
+                x = {
+                    'amount': x[0],
+                    'frequency': x[1]
+                }
             elif k in [ 'heads', 'context', 'embedding', 'layers' ]:
                 x = int(x)
                 

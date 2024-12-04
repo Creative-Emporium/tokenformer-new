@@ -42,6 +42,12 @@ class TokenFormerPAttention(nn.Module):
         x = F.softmax(x, dim=-1)
         x = x @ self.V
         return x
+    
+    def grow_parameters(self, N):
+        new_K = torch.zeros((N, self.embedding), device=self.K.device, dtype=self.K.dtype)
+        new_V = torch.zeros((N, self.embedding), device=self.V.device, dtype=self.V.dtype)
+        self.K = nn.Parameter(torch.cat([self.K, new_K], dim=0))
+        self.V = nn.Parameter(torch.cat([self.V, new_V], dim=0))
 
 class TokenFormerBlock(nn.Module):
 
@@ -83,6 +89,13 @@ class TokenFormerBlock(nn.Module):
         x = self.ffn(x)
 
         return x + x_inter
+    
+    def grow_parameters(self, N):
+        self.qattn.grow_parameters(N)
+        self.kattn.grow_parameters(N)
+        self.vattn.grow_parameters(N)
+        self.proj.grow_parameters(N)
+        self.ffn.grow_parameters(N)
 
 class TokenFormerModel(nn.Module):
 
@@ -94,7 +107,7 @@ class TokenFormerModel(nn.Module):
 
         blocks = [ TokenFormerBlock(config) for i in range(config.layers) ]
         blocks += [
-            nn.LayerNorm(config.embedding),
+            NonParametricNormalization(config.embedding),
             nn.Linear(config.embedding, config.vocabulary)
         ]
 
@@ -134,3 +147,8 @@ class TokenFormerModel(nn.Module):
             tokens = torch.cat((tokens, generated), dim=1)
 
         return tokens
+    
+    def grow_parameters(self, N):
+        for block in self.final:
+            if isinstance(block, TokenFormerBlock):
+                block.grow_parameters(N)
