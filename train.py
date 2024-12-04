@@ -39,8 +39,6 @@ config = configs[choice]
 pprint.PrettyPrinter(indent=4).pprint(config)
 print('')
 
-assert 'model' in config
-
 # PyTorch configuration
 torch.manual_seed(0)
 torch.set_float32_matmul_precision('high')
@@ -57,6 +55,9 @@ def edit_model_config(config, model_config):
                 x = int(x)
                 
             setattr(model_config, k, x)
+    
+    if 'extension' in config:
+        setattr(model_config, 'parameters', config['extension'])
 
 if config['model'] == 'transformer':
     model_config = TransformerConfiguration()
@@ -74,61 +75,104 @@ else:
 model = model.cuda()
 torch.compile(model)
 
-dataset = Dataset(model_config, config['languages'])
+languages = config['languages']
+datasets = { lang : Dataset(model_config, lang) for lang in languages }
 
 training = config['training']
 steps = training['steps'] * training['batch'] // args.batch + 1
 
 opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
 
+# Training history
 losses = []
-perplexities = []
+perplexities = { lang: [] for lang in languages }
 
+# Prepare language masks
+masked = False
+if config['model'] == 'tokenformer' \
+        and 'masked' in config      \
+        and config['masked']:
+    assert 'extension' in config
+    
+    extension = config['extension']
+    masked = True
+
+# Training loop
 t_train = time.time()
-for epoch in range(training['epochs']):
-    t_begin = time.time()
 
-    X, y = dataset.generate_batch(args.batch)
-
-    header(f'EPOCH #{epoch + 1}')
+for index, lang in enumerate(datasets):
+    dataset = datasets[lang]
     
-    bar = tqdm.tqdm(range(steps),
-                    desc='\tTraining model',
-                    ncols=100)
+    mask = None
+    if masked:
+        mask = torch.zeros((model.parameter_count, 1)).cuda()
+        mask[index * extension:] = 1
+    
+    for epoch in range(training['epochs']):
+        t_begin = time.time()
 
-    for _ in bar:
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            logits, loss = model(X, y)
+        X, y = dataset.generate_batch(args.batch)
 
-        opt.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        opt.step()
-
-        # Relay statistics
-        bar.set_postfix({
-            'loss': f'{loss.item() :01.4f}',
-        })
+        header(f'EPOCH #{epoch + 1} [{lang}]')
         
-        losses.append(loss.item())
+        bar = tqdm.tqdm(range(steps),
+                        desc='\tTraining model',
+                        ncols=100)
 
-    bar.close()
+        for _ in bar:
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                logits, loss = model(X, y, mask=mask)
 
-    t_end = time.time()
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            opt.step()
 
-    # Evaluate the model
-    with torch.no_grad():
-        perplexity = dataset.evaluate_perplexity(model)
-        print(f'\n\tPerplexity = {perplexity}')
-        print(f'\tDelta = {(t_end - t_begin) / 60 :.0f} min, Progress = {(t_end - t_train) / 60 :.0f} min')
-        print(f'\tNumber of parameters = {parameter_count(model)}')
-        generate_samples(model, dataset, model_config.encoding)
-        perplexities.append(perplexity)
+            # Relay statistics
+            bar.set_postfix({
+                'loss': f'{loss.item() :01.4f}',
+            })
+            
+            losses.append(loss.item())
+
+        bar.close()
+        print('')
+
+        t_end = time.time()
+
+        # Evaluate the model
+        with torch.no_grad():
+            for i, l in enumerate(languages):
+                mask = None
+                if masked:
+                    mask = torch.zeros((model.parameter_count, 1)).cuda()
+                    mask[i * extension : (i + 1) * extension] = 1
+                
+                perplexity = datasets[l].evaluate_perplexity(model, mask=mask)
+                perplexities[l].append(perplexity)
+                
+            print('')
+            for l in languages:
+                print(f'\tPerplexity [{l}] = {perplexities[l][-1]}')
+                
+            print(f'\n\tDelta = {(t_end - t_begin) / 60 :.0f} min, Progress = {(t_end - t_train) / 60 :.0f} min')
+            print(f'\tNumber of parameters = {parameter_count(model)}')
+            generate_samples(model, dataset, model_config.encoding, mask=mask)
+        
+        if epoch > 0 and ('grow' in config)                             \
+                and epoch + 1 < len(training['epochs'])                 \
+                and (epoch + 1) % config['grow']['frequency'] == 0:
+            amount = config['grow']['amount']
+            print(f'\n\t[!] Growing model by {amount} parameters')
+            model.grow_parameters(amount)
     
-    if epoch > 0 and 'grow' in config and  (epoch + 1) % config['grow']['frequency'] == 0:
-        amount = config['grow']['amount']
-        print(f'\tGrowing model by {amount} parameters')
+    # Grow the model between learning new languages
+    if config['model'] == 'tokenformer'     \
+            and 'extension' in config       \
+            and (index + 1) < len(datasets):
+        amount = config['extension']
         model.grow_parameters(amount)
+        print(f'\n\t[!] Growing model by {amount} parameters')
 
 # Write data
 os.makedirs('data', exist_ok=True)
@@ -136,8 +180,10 @@ os.makedirs('data', exist_ok=True)
 basename = choice.replace('/', '-')
 basename = os.path.join('data', basename)
 
-np.savez(basename + '-metrics.npz',
-         loss=np.array(losses),
-         perplexity=np.array(perplexities))
-
+data = { 'loss': np.array(losses) }
+for lang in perplexities:
+    key = f'perplexity[{lang}]'
+    data[key] = np.array(perplexities[lang])
+    
+np.savez(basename + '-metrics.npz', **data)
 torch.save(model, basename + '-model.tch')

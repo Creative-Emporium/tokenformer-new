@@ -33,8 +33,10 @@ for f in glob.glob('configs/*.ini'):
                     'amount': x[0],
                     'frequency': x[1]
                 }
-            elif k in [ 'heads', 'context', 'embedding', 'layers' ]:
+            elif k in [ 'heads', 'context', 'embedding', 'layers', 'extension' ]:
                 x = int(x)
+            elif k in [ 'masked', 'incremental' ]:
+                x = True if x == 'yes' else False
                 
             if x == 'no':
                 x = False

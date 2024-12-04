@@ -36,11 +36,16 @@ class TokenFormerPAttention(nn.Module):
         self.embedding = config.embedding
         self.heads = config.heads
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
+        k, v = self.K, self.V
+        # if not mask is None:
+        #     k = k * mask
+        #     v = v * mask
+            
         scale = self.embedding ** (-0.5)
-        x = scale * x @ self.K.T
+        x = scale * x @ k.T
         x = F.softmax(x, dim=-1)
-        x = x @ self.V
+        x = x @ v
         return x
     
     def grow_parameters(self, N):
@@ -64,14 +69,14 @@ class TokenFormerBlock(nn.Module):
 
         self.heads = config.heads
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         x_in = x
 
         x = self.normalization(x)
 
-        k = self.kattn(x)
-        q = self.qattn(x)
-        v = self.vattn(x)
+        k = self.kattn(x, mask=mask)
+        q = self.qattn(x, mask=mask)
+        v = self.vattn(x, mask=mask)
 
         # Multi-head token-token attention
         B, T, C = k.shape
@@ -80,13 +85,13 @@ class TokenFormerBlock(nn.Module):
         v = v.view(B, T, self.heads, C // self.heads).transpose(1, 2)
         x = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         x = x.transpose(1, 2).contiguous().view(B, T, C)
-        x = self.proj(x)
+        x = self.proj(x, mask=mask)
 
         x = x + x_in
         x_inter = x
 
         x = self.normalization(x)
-        x = self.ffn(x)
+        x = self.ffn(x, mask=mask)
 
         return x + x_inter
     
@@ -105,16 +110,15 @@ class TokenFormerModel(nn.Module):
         self.wte = nn.Embedding(config.vocabulary, config.embedding)
         self.wpe = nn.Embedding(config.context, config.embedding)
 
-        blocks = [ TokenFormerBlock(config) for i in range(config.layers) ]
-        blocks += [
-            NonParametricNormalization(config.embedding),
-            nn.Linear(config.embedding, config.vocabulary)
-        ]
-
-        self.final = nn.Sequential(*blocks)
+        self.blocks = [ TokenFormerBlock(config) for i in range(config.layers) ]
+        self.blocks = nn.Sequential(*self.blocks)
+        self.normalization = NonParametricNormalization(config.embedding)
+        self.projection = nn.Linear(config.embedding, config.vocabulary)
+        
         self.context = config.context
+        self.parameter_count = config.parameters
 
-    def forward(self, indices, targets=None):
+    def forward(self, indices, targets=None, mask=None):
         T = indices.size(1)
 
         positions = torch.arange(0, T, dtype=torch.long, device=indices.device)
@@ -123,7 +127,13 @@ class TokenFormerModel(nn.Module):
         pemb = self.wpe(positions)
 
         x = temb + pemb
-        logits = self.final(x)
+        
+        # Need to manually iterate in order to pass the mask
+        for block in self.blocks:
+            x = block(x, mask=mask)
+        
+        x = self.normalization(x)
+        logits = self.projection(x)
 
         loss = None
         if not targets is None:
@@ -134,9 +144,9 @@ class TokenFormerModel(nn.Module):
 
         return logits, loss
 
-    def generate(self, tokens, N):
+    def generate(self, tokens, N, mask=None):
         for _ in range(N):
-            logits, _ = self(tokens[:, -self.context:])
+            logits, _ = self(tokens[:, -self.context:], mask=mask)
             logits = logits[:, -1, :]
             probabilities = F.softmax(logits, dim=-1)
 
@@ -149,6 +159,7 @@ class TokenFormerModel(nn.Module):
         return tokens
     
     def grow_parameters(self, N):
-        for block in self.final:
-            if isinstance(block, TokenFormerBlock):
-                block.grow_parameters(N)
+        for block in self.blocks:
+            block.grow_parameters(N)
+        
+        self.parameter_count += N

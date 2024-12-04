@@ -82,7 +82,7 @@ class TransformerModel(nn.Module):
         self.final = nn.Sequential(*blocks)
         self.context = config.context
 
-    def forward(self, indices, targets=None):
+    def forward(self, indices, targets=None, mask=None):
         T = indices.size(1)
 
         positions = torch.arange(0, T, dtype=torch.long, device=indices.device)
@@ -102,7 +102,7 @@ class TransformerModel(nn.Module):
 
         return logits, loss
 
-    def generate(self, tokens, N):
+    def generate(self, tokens, N, mask=None):
         for _ in range(N):
             logits, _ = self(tokens[:, -self.context:])
             logits = logits[:, -1, :]
