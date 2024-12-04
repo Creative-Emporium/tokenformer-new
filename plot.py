@@ -19,6 +19,8 @@ tokenformer_perplexities = tokenformer_metrics['perplexity']
 
 plt.figure(figsize=(10, 8), layout='constrained')
 plt.yscale('log')
+plt.xlabel('Epochs')
+plt.ylabel('Perplexity')
 plt.plot(transformer_perplexities, label='Transformer')
 plt.plot(tokenformer_perplexities, label='TokenFormer')
 plt.legend()
@@ -33,8 +35,45 @@ growth_128_perplexities = growth_128_metrics['perplexity']
 
 plt.figure(figsize=(10, 8), layout='constrained')
 plt.yscale('log')
+plt.xlabel('Epochs')
+plt.ylabel('Perplexity')
 plt.plot(growth_64_perplexities, label='Grow 64 every 50')
 plt.plot(growth_128_perplexities, label='Grow 128 every 100')
 plt.plot(tokenformer_perplexities, label='Baseline (TokenFormer)')
 plt.legend()
+plt.show()
+
+# Continual learning -- with and without masking
+unmasked_metrics = np.load('data/continual-unmasked-non-incremental-metrics.npz')
+masked_metrics = np.load('data/continual-masked-non-incremental-metrics.npz')
+
+unmasked_perplexities_en = unmasked_metrics['perplexity[en]']
+masked_perplexities_en = masked_metrics['perplexity[en]']
+
+unmasked_perplexities_fr = unmasked_metrics['perplexity[fr]']
+masked_perplexities_fr = masked_metrics['perplexity[fr]']
+
+unmasked_perplexities_es = unmasked_metrics['perplexity[es]']
+masked_perplexities_es = masked_metrics['perplexity[es]']
+
+_, axs = plt.subplots(3, 1, figsize=(10, 8), layout='constrained')
+
+axs[0].set_title('English')
+axs[0].plot(unmasked_perplexities_en, label='Unmasked [en]')
+axs[0].plot(masked_perplexities_en, label='Masked [en]')
+
+axs[1].set_title('French')
+axs[1].plot(unmasked_perplexities_fr, label='Unmasked [fr]')
+axs[1].plot(masked_perplexities_fr, label='Masked [fr]')
+
+axs[2].set_title('Spanish')
+axs[2].plot(unmasked_perplexities_es, label='Unmasked [es]')
+axs[2].plot(masked_perplexities_es, label='Masked [es]')
+
+for ax in axs:
+    ax.set_yscale('log')
+    ax.set_xlabel('Epochs')
+    ax.set_ylabel('Perplexity')
+    ax.legend()
+
 plt.show()

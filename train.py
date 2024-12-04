@@ -165,14 +165,20 @@ for index, lang in enumerate(datasets):
             amount = config['grow']['amount']
             print(f'\n\t[!] Growing model by {amount} parameters')
             model.grow_parameters(amount)
+            
+            opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
+            torch.compile(model)
     
     # Grow the model between learning new languages
     if config['model'] == 'tokenformer'     \
             and 'extension' in config       \
             and (index + 1) < len(datasets):
         amount = config['extension']
-        model.grow_parameters(amount)
         print(f'\n\t[!] Growing model by {amount} parameters')
+        model.grow_parameters(amount)
+        
+        opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
+        torch.compile(model)
 
 # Write data
 os.makedirs('data', exist_ok=True)
@@ -187,3 +193,5 @@ for lang in perplexities:
     
 np.savez(basename + '-metrics.npz', **data)
 torch.save(model, basename + '-model.tch')
+
+# TODO: repetitions over all languages to fix the wpe, wtes and etc...
