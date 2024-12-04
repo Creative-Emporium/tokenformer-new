@@ -160,7 +160,7 @@ for index, lang in enumerate(datasets):
             generate_samples(model, dataset, model_config.encoding, mask=mask)
         
         if epoch > 0 and ('grow' in config)                             \
-                and epoch + 1 < len(training['epochs'])                 \
+                and epoch + 1 < training['epochs']                      \
                 and (epoch + 1) % config['grow']['frequency'] == 0:
             amount = config['grow']['amount']
             print(f'\n\t[!] Growing model by {amount} parameters')
