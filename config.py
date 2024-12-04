@@ -2,10 +2,9 @@ import glob
 import configparser
 
 # Load all of the configurations
-parser = configparser.ConfigParser()
-
 configs = {}
 for f in glob.glob('configs/*.ini'):
+    parser = configparser.ConfigParser()
     parser.read(f)
     
     prefix = f[8:-4]
