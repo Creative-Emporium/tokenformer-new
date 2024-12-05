@@ -30,16 +30,28 @@ plt.show()
 growth_64_metrics = np.load('data/growth-grow-64-metrics.npz')
 growth_128_metrics = np.load('data/growth-grow-128-metrics.npz')
 
-growth_64_perplexities = growth_64_metrics['perplexity']
-growth_128_perplexities = growth_128_metrics['perplexity']
+growth_non_reset_64_metrics = np.load('data/growth-grow-64-metrics-non-reset.npz')
+growth_non_reset_128_metrics = np.load('data/growth-grow-128-metrics-non-reset.npz')
+
+growth_64_perplexities = growth_64_metrics['perplexity[en]']
+growth_128_perplexities = growth_128_metrics['perplexity[en]']
+
+growth_non_reset_64_perplexities = growth_non_reset_64_metrics['perplexity']
+growth_non_reset_128_perplexities = growth_non_reset_128_metrics['perplexity']
 
 plt.figure(figsize=(10, 8), layout='constrained')
 plt.yscale('log')
 plt.xlabel('Epochs')
 plt.ylabel('Perplexity')
+
+# plt.plot(growth_non_reset_64_perplexities, label='Grow 64 every 50')
+# plt.plot(growth_non_reset_128_perplexities, label='Grow 128 every 100')
+
 plt.plot(growth_64_perplexities, label='Grow 64 every 50')
 plt.plot(growth_128_perplexities, label='Grow 128 every 100')
+
 plt.plot(tokenformer_perplexities, label='Baseline (TokenFormer)')
+
 plt.legend()
 plt.show()
 

@@ -155,7 +155,7 @@ for index, lang in enumerate(datasets):
             for l in languages:
                 print(f'\tPerplexity [{l}] = {perplexities[l][-1]}')
                 
-            print(f'\n\tDelta = {(t_end - t_begin) / 60 :.0f} min, Progress = {(t_end - t_train) / 60 :.0f} min')
+            print(f'\n\tDelta = {(t_end - t_begin) :.0f} sec, Progress = {(t_end - t_train) / 60 :.0f} min')
             print(f'\tNumber of parameters = {parameter_count(model)}')
             generate_samples(model, dataset, model_config.encoding, mask=mask)
         

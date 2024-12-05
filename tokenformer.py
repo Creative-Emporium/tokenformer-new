@@ -29,19 +29,17 @@ class NonParametricNormalization(torch.nn.Module):
 
 class TokenFormerPAttention(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, mux=1):
         super().__init__()
-        self.K = nn.Parameter(torch.randn(config.parameters, config.embedding))
-        self.V = nn.Parameter(torch.randn(config.parameters, config.embedding))
+        self.K = nn.Parameter(torch.randn(mux * config.parameters // 2, config.embedding))
+        self.V = nn.Parameter(torch.randn(mux * config.parameters // 2, config.embedding))
         self.embedding = config.embedding
         self.heads = config.heads
+        self.mux = mux
 
     def forward(self, x, mask=None):
+        # TODO: task vector masking?
         k, v = self.K, self.V
-        # if not mask is None:
-        #     k = k * mask
-        #     v = v * mask
-            
         scale = self.embedding ** (-0.5)
         x = scale * x @ k.T
         x = F.softmax(x, dim=-1)
@@ -49,8 +47,8 @@ class TokenFormerPAttention(nn.Module):
         return x
     
     def grow_parameters(self, N):
-        new_K = torch.zeros((N, self.embedding), device=self.K.device, dtype=self.K.dtype)
-        new_V = torch.zeros((N, self.embedding), device=self.V.device, dtype=self.V.dtype)
+        new_K = torch.zeros((self.mux * N // 2, self.embedding), device=self.K.device, dtype=self.K.dtype)
+        new_V = torch.zeros((self.mux * N // 2, self.embedding), device=self.V.device, dtype=self.V.dtype)
         self.K = nn.Parameter(torch.cat([self.K, new_K], dim=0))
         self.V = nn.Parameter(torch.cat([self.V, new_V], dim=0))
 
@@ -65,7 +63,7 @@ class TokenFormerBlock(nn.Module):
         self.vattn = TokenFormerPAttention(config)
 
         self.proj = TokenFormerPAttention(config)
-        self.ffn = TokenFormerPAttention(config)
+        self.ffn = TokenFormerPAttention(config, mux=4)
 
         self.heads = config.heads
 
@@ -112,6 +110,7 @@ class TokenFormerModel(nn.Module):
 
         self.blocks = [ TokenFormerBlock(config) for i in range(config.layers) ]
         self.blocks = nn.Sequential(*self.blocks)
+        
         self.normalization = NonParametricNormalization(config.embedding)
         self.projection = nn.Linear(config.embedding, config.vocabulary)
         
@@ -128,10 +127,7 @@ class TokenFormerModel(nn.Module):
 
         x = temb + pemb
         
-        # Need to manually iterate in order to pass the mask
-        for block in self.blocks:
-            x = block(x, mask=mask)
-        
+        x = self.blocks(x)
         x = self.normalization(x)
         logits = self.projection(x)
 
